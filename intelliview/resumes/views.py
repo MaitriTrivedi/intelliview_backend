@@ -25,3 +25,4 @@ class ResumeListView(APIView):
         resumes = Resume.objects.filter(user=request.user)
         serializer = ResumeSerializer(resumes, many=True)
         return Response(serializer.data)
+
