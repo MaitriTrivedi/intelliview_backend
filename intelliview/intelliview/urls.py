@@ -25,6 +25,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('accounts.urls')),
     path('api/resumes/', include('resumes.urls')),
+    path('api/interviews/', include('interviews.urls')),  # Add interviews URLs
     path('api/health-check/', health_check, name='health-check'),  # Health check endpoint
     path('api/llm/health-check', llm_health_check, name='llm-health-check'),  # LLM health check
     path('api/llm/<path:endpoint>', llm_service_proxy, name='llm-proxy'),  # LLM service proxy
