@@ -197,9 +197,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # CORS settings
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Allow all origins for development, change this in production
+
+# These settings are used when CORS_ALLOW_ALL_ORIGINS is False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React development server
     "http://127.0.0.1:3000",
+    "https://5b98-49-207-59-237.ngrok-free.app",  # LLM service
 ]
 
 CORS_ALLOW_METHODS = [
