@@ -1,11 +1,43 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml '''
+            apiVersion: v1
+            kind: Pod
+            spec:
+              containers:
+              - name: python
+                image: python:3.10-slim
+                command:
+                - cat
+                tty: true
+              - name: docker
+                image: docker:20.10.16-dind
+                command:
+                - cat
+                tty: true
+                privileged: true
+                volumeMounts:
+                - name: docker-sock
+                  mountPath: /var/run/docker.sock
+              - name: kubectl
+                image: bitnami/kubectl:latest
+                command:
+                - cat
+                tty: true
+              volumes:
+              - name: docker-sock
+                hostPath:
+                  path: /var/run/docker.sock
+            '''
+        }
+    }
     
     environment {
-        DOCKER_IMAGE = 'intelliview-backend'
-        DOCKER_TAG = "${BUILD_NUMBER}"
-        SUPABASE_URL = credentials('SUPABASE_URL')
-        SUPABASE_KEY = credentials('SUPABASE_KEY')
+        DOCKER_REGISTRY = 'docker.io/mtrivedi1410'
+        IMAGE_NAME = 'intelliview-backend'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        LLM_SERVICE_URL = credentials('llm-service-url')
     }
     
     stages {
@@ -15,67 +47,138 @@ pipeline {
             }
         }
         
-        stage('Setup Python Environment') {
+        stage('Install Dependencies') {
             steps {
-                dir('intelliview_backend') {
-                    sh '''
-                        python -m venv venv
-                        . venv/bin/activate
-                        pip install -r requirements.txt
-                    '''
+                container('python') {
+                    sh 'pip install -r intelliview_backend/requirements.txt'
                 }
             }
         }
         
         stage('Run Tests') {
             steps {
-                dir('intelliview_backend') {
-                    sh '''
-                        . venv/bin/activate
-                        python manage.py test
-                    '''
+                container('python') {
+                    dir('intelliview_backend/intelliview') {
+                        sh 'python manage.py test'
+                    }
                 }
             }
         }
         
         stage('Build Docker Image') {
             steps {
-                dir('intelliview_backend') {
-                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                container('docker') {
+                    dir('intelliview_backend') {
+                        sh 'docker build -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} .'
+                    }
                 }
             }
         }
         
-        stage('Deploy') {
+        stage('Push Docker Image') {
             steps {
-                script {
-                    // Stop existing container if running
-                    sh "docker stop ${DOCKER_IMAGE} || true"
-                    sh "docker rm ${DOCKER_IMAGE} || true"
+                container('docker') {
+                    withCredentials([usernamePassword(credentialsId: 'DockerHubCredential', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                        sh 'echo $DOCKER_PASSWORD | docker login docker.io -u $DOCKER_USERNAME --password-stdin'
+                        sh 'docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}'
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                container('kubectl') {
+                    // Create ConfigMap for env variables
+                    sh '''
+                    cat <<EOF | kubectl apply -f -
+                    apiVersion: v1
+                    kind: ConfigMap
+                    metadata:
+                      name: intelliview-backend-config
+                      namespace: intelliview
+                    data:
+                      LLM_SERVICE_URL: "${LLM_SERVICE_URL}"
+                    EOF
+                    '''
                     
-                    // Run new container with Supabase environment variables
-                    sh """
-                        docker run -d --name ${DOCKER_IMAGE} \
-                        -p 8000:8000 \
-                        -e SUPABASE_URL=${SUPABASE_URL} \
-                        -e SUPABASE_KEY=${SUPABASE_KEY} \
-                        ${DOCKER_IMAGE}:${DOCKER_TAG}
-                    """
+                    // Apply the Kubernetes manifests with proper image and environment
+                    sh '''
+                    cat <<EOF | kubectl apply -f -
+                    apiVersion: apps/v1
+                    kind: Deployment
+                    metadata:
+                      name: intelliview-backend
+                      namespace: intelliview
+                    spec:
+                      replicas: 2
+                      selector:
+                        matchLabels:
+                          app: intelliview-backend
+                      template:
+                        metadata:
+                          labels:
+                            app: intelliview-backend
+                        spec:
+                          containers:
+                          - name: intelliview-backend
+                            image: ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            ports:
+                            - containerPort: 8000
+                            env:
+                            - name: DEBUG
+                              value: "False"
+                            - name: DJANGO_SECRET_KEY
+                              valueFrom:
+                                secretKeyRef:
+                                  name: intelliview-secrets
+                                  key: django-secret-key
+                            - name: LLM_SERVICE_URL
+                              valueFrom:
+                                configMapKeyRef:
+                                  name: intelliview-backend-config
+                                  key: LLM_SERVICE_URL
+                            resources:
+                              limits:
+                                cpu: "500m"
+                                memory: "512Mi"
+                              requests:
+                                cpu: "200m"
+                                memory: "256Mi"
+                    ---
+                    apiVersion: v1
+                    kind: Service
+                    metadata:
+                      name: intelliview-backend-service
+                      namespace: intelliview
+                    spec:
+                      selector:
+                        app: intelliview-backend
+                      ports:
+                      - port: 80
+                        targetPort: 8000
+                      type: ClusterIP
+                    EOF
+                    '''
+                    
+                    // Wait for deployment to be ready
+                    sh 'kubectl rollout status deployment/intelliview-backend -n intelliview --timeout=300s'
                 }
             }
         }
     }
     
     post {
-        failure {
-            emailext body: 'Backend build failed. Please check Jenkins for details.',
-                     subject: 'Backend Build Failure',
-                     to: '${EMAIL_RECIPIENTS}'
-        }
         always {
-            dir('intelliview_backend') {
-                sh 'rm -rf venv'
+            container('docker') {
+                sh 'docker logout ${DOCKER_REGISTRY}'
             }
+        }
+        success {
+            echo 'Backend pipeline completed successfully!'
+        }
+        failure {
+            echo 'Backend pipeline failed!'
         }
     }
 } 

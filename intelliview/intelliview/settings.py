@@ -92,24 +92,9 @@ WSGI_APPLICATION = 'intelliview.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': BASE_DIR / 'data/db.sqlite3',
     }
 }
-
-# Commented out Supabase config temporarily for debugging
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'postgres',
-#         'USER': 'postgres.iybuwqsrcmgxpkuznlbd',
-#         'PASSWORD': os.environ.get('SUPABASE_DB_PASSWORD', ''),
-#         'HOST': 'aws-0-ap-south-1.pooler.supabase.com',
-#         'PORT': '6543',
-#         'OPTIONS': {
-#             'sslmode': 'require',
-#         },
-#     }
-# }
 
 # Session settings
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
@@ -205,7 +190,7 @@ CORS_ALLOW_ALL_ORIGINS = True  # Allow all origins for development, change this 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React development server
     "http://127.0.0.1:3000",
-    "https://5b98-49-207-59-237.ngrok-free.app",  # LLM service
+    "http://frontend:3000",   # Docker service name
 ]
 
 CORS_ALLOW_METHODS = [
